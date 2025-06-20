@@ -114,4 +114,5 @@ def main():
     title = save_summary_notes(service, document, response)
     print("Summary document with action items has been created and saved to your Google Drive as: \"" + title+"\"")
 
-main()
+if __name__ == "__main__":
+    main()
