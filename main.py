@@ -11,6 +11,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
+import re
 
 #This function uses Google Docs API to extract text from a Google Doc and save it locally as a text file.
 def get_meeting_notes():
@@ -53,12 +54,17 @@ def get_meeting_notes():
                 if text_run:
                     all_document_text += text_run.get('content', '')
 
+    
+
+    # Remove invalid filename characters
+    title = re.sub(r'[<>:"/\\|?*]', '', document.get('title'))
+    
     #download meeting notes as text file
-    with open(f"{document.get('title')}.txt", "w") as f:
+    with open(title, "w") as f:
         f.write(all_document_text)
     f.close()
 
-    return service, document, all_document_text
+    return service, document, all_document_text, title
 
 #This function takes a String of meeting notes as input and uses OpenAI's GPT-3.5-turbo model to summarize the notes and extract action items.
 def summarize_notes(all_document_text):
@@ -77,9 +83,9 @@ def summarize_notes(all_document_text):
     return response
 
 #This function takes in a Google Docs service object, the document object, and the response from OpenAI's API. It creates a new Google Docs document for the summary and action items, and saves it to the user's Google Drive.
-def save_summary_notes(service, document, response):        
+def save_summary_notes(service, document, response, title):        
     #Create a new Google Docs document for the summary - summary_doc
-    title = document.get('title') + " - Summary"
+    title = title + " - Summary"
     body = {
         'title': title
     }
@@ -105,13 +111,13 @@ def save_summary_notes(service, document, response):
 
 def main():
     #Extract text from meeting notes Google Doc and save it locally as text file
-    service, document, all_document_text = get_meeting_notes()
+    service, document, all_document_text, title = get_meeting_notes()
 
     #Obtain summary and action items from OpenAI's API
     response = summarize_notes(all_document_text)
 
     #Save summary notes to user's Google Drive account
-    title = save_summary_notes(service, document, response)
+    title = save_summary_notes(service, document, response, title)
     print("Summary document with action items has been created and saved to your Google Drive as: \"" + title+"\"")
 
 if __name__ == "__main__":
