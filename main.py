@@ -1,47 +1,93 @@
-from google.oauth2 import service_account
+#download all necessary libraries (APIs, OpenAI)
+import sys
+import subprocess
+print("\nInstalling/updating required libraries...\n")
+subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "google-api-python-client", "google-auth-oauthlib", "google-auth-httplib2", "openai", "python-dotenv", "--quiet"])
+
+#import libraries
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
 
-#python3 -m pip install --upgrade google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
-
+#set scopes of Google Docs API, accesses user's documents.
 SCOPES = ['https://www.googleapis.com/auth/documents']
-CREDS = "client_creds.json"
+CREDS = "client_creds.json"     #client_creds.json contains client credentials for Google Docs API
 
-flow = InstalledAppFlow.from_client_secrets_file(CREDS, SCOPES)
-credentials = flow.run_local_server(port=0)
+#prompt user to authenticate with Google account, return a credentials object
+try:
+    flow = InstalledAppFlow.from_client_secrets_file(CREDS, SCOPES)
+    credentials = flow.run_local_server(port=0)
+except:
+    print("Failure to authenticate with Google account. Please try again.")
+    exit()
 
-# credentials = service_account.Credentials.from_service_account_file(CREDS, scopes=SCOPES)
+#set up Google Docs API service object
 service = build('docs', 'v1', credentials=credentials)
 
-#https://docs.google.com/document/d/18jR7tuhTSEB2DixusRON-SvtA7N5SXSsLSem51bC70s/edit?tab=t.0
+#prompt user to enter Google Docs URL
 input_url = input("Enter the Google Docs URL: ")
 
-DOC_ID = input_url.split("/d/")[1].split("/")[0]
+#isolate the Google Docs ID from the URL
+try:
+    DOC_ID = input_url.split("/d/")[1].split("/")[0]
+except:
+    print('Invalid URL. Please enter a valid Google Docs URL.')
+    exit()
+#fetch the document using the Google Docs API
 document = service.documents().get(documentId=DOC_ID).execute()
 
-# print(document.get('body').get('content')[0:3])
-
+#extract the content of the document
 document_content = document.get('body').get('content')
 
+#extract text from document content (this is the meeting notes)
 all_document_text = ""
 for element in document_content:
     if 'paragraph' in element:
-        text = element['paragraph']['elements'][0]['textRun']['content']
-        all_document_text += text
+        for sub_element in element['paragraph']['elements']:
+            text_run = sub_element.get('textRun')
+            if text_run:
+                all_document_text += text_run.get('content', '')
 
-
-with open("output.txt", "w") as f:
+#download meeting notes as text file
+with open(f"{document.get('title')}.txt", "w") as f:
     f.write(all_document_text)
 f.close()
 
-# load_dotenv()
-client = OpenAI(api_key="")
-print(client.models.list())
+#load environment variables, including OpenAI API key
+load_dotenv()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-response = client.chat.completions.create(model="gpt-3.5-turbo", 
-                                   messages=[{"role":"user", "content":f"Summarize the following text:\n{all_document_text} in two or three sentences, and give me some bullet points of any action items."}])
+#prompt ChatGPT to summarize meeting notes and extract action items
+try:
+    response = client.chat.completions.create(model="gpt-3.5-turbo", 
+                                    messages=[{"role":"user", "content":f"Summarize the following meeting notes:[START MEETING NOTES]\n{all_document_text}[END MEETING NOTES] in three sentences and only three sentences, no less and no more. In addition, give me some bullet points of any descriptions of action items mentioned in the meeting along with the people responsible in the format • PERSON: ACTION, including the bullet point. Add two newline spaces between the summary and the bullet points. Be specific! Don't include anything other than the summary and the bullet points."}]).choices[0].message.content
+except:
+    print("Error with OpenAI API response. Please check the API key or status of OpenAI.")
+    exit()
+    
+#Create a new Google Docs document for the summary - summary_doc
+title = document.get('title') + " - Summary"
+body = {
+    'title': title
+}
+summary_doc = service.documents().create(body=body).execute()
 
-print(response.choices[0].message.content)
+#Insert ChatGPT's response into the new document
+start_insert = document['body']['content'][0]['endIndex']
+requests = [
+    {
+        'insertText': {
+            'location':{
+                'index': start_insert
+            },
+            'text': response
+        }
+    }
+]
+
+#Update the newly created document with the summary and action items
+result = service.documents().batchUpdate(documentId=summary_doc.get('documentId'), body={'requests': requests}).execute()
+
+print("Summary Document has been created and saved to your Google Drive as a Google Document titled" + title)
